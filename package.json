@@ -14,3 +14,9 @@
     "dev:bun": "bun --watch bun.mjs"
   },"name": "gemini-n8n"
 }
+{
+  "name": "gemini-proxy",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {}
+}
