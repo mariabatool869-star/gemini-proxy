@@ -1,11 +1,5 @@
-// api/index.js - Simple, working Gemini proxy for n8n
+// api/index.js - Working Gemini Proxy
 export default async function handler(req, res) {
-  // Handle CORS preflight requests
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
-
   // Only allow POST requests
   if (req.method !== 'POST') {
     return res.status(405).json({ 
@@ -15,52 +9,38 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Get the request body
-    const body = req.body;
-    
-    // Extract OpenAI-style data
-    const { model, messages, temperature, max_tokens } = body;
+    // Get the request body from n8n
+    const { model, messages, temperature, max_tokens } = req.body;
 
-    // Validate required fields
-    if (!messages || !Array.isArray(messages)) {
-      return res.status(400).json({ 
-        error: 'Missing "messages" array in request body' 
-      });
+    // Get API key from environment variable OR from request
+    let GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    
+    // If not in environment, try to get it from the Authorization header
+    if (!GEMINI_API_KEY) {
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        GEMINI_API_KEY = authHeader.substring(7);
+      }
     }
 
-    // Get Gemini API key from environment
-    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
     if (!GEMINI_API_KEY) {
-      console.error('GEMINI_API_KEY is not set in environment variables');
       return res.status(500).json({ 
-        error: 'Server configuration error: Missing Gemini API key',
-        fix: 'Add GEMINI_API_KEY in Vercel → Settings → Environment Variables'
+        error: 'Missing GEMINI_API_KEY. Set it in Vercel environment variables or send it in the Authorization header.'
       });
     }
 
     // Convert OpenAI messages to Gemini format
-    const geminiContents = messages.map(msg => {
-      let role = 'user';
-      if (msg.role === 'assistant') role = 'model';
-      if (msg.role === 'system') role = 'user'; // Gemini doesn't have system role
-      
-      return {
-        role: role,
-        parts: [{ text: msg.content }]
-      };
-    });
+    const geminiContents = messages.map(msg => ({
+      role: msg.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: msg.content }]
+    }));
 
-    // Determine which Gemini model to use
-    const geminiModel = model || 'gemini-1.5-flash';
-    // Only use specific Gemini models
-    const validModels = ['gemini-1.5-flash', 'gemini-2.0-flash-exp', 'gemini-1.5-pro'];
-    const finalModel = validModels.includes(geminiModel) ? geminiModel : 'gemini-1.5-flash';
-
-    console.log(`Using model: ${finalModel}`);
+    // Use the model requested, or default to gemini-2.0-flash-exp
+    const modelName = model || 'gemini-2.0-flash-exp';
 
     // Call Google Gemini API
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${finalModel}:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${GEMINI_API_KEY}`,
       {
         method: 'POST',
         headers: {
@@ -78,12 +58,11 @@ export default async function handler(req, res) {
 
     const data = await response.json();
 
-    // Check for Gemini API errors
+    // Check for errors from Gemini
     if (data.error) {
       console.error('Gemini API error:', data.error);
       return res.status(400).json({
-        error: data.error.message || 'Gemini API error',
-        details: data.error
+        error: data.error.message || 'Gemini API error'
       });
     }
 
@@ -96,14 +75,8 @@ export default async function handler(req, res) {
         message: {
           role: 'assistant',
           content: generatedText
-        },
-        finish_reason: 'stop'
-      }],
-      usage: {
-        prompt_tokens: 0,
-        completion_tokens: 0,
-        total_tokens: 0
-      }
+        }
+      }]
     };
 
     res.status(200).json(openAIResponse);
@@ -111,8 +84,7 @@ export default async function handler(req, res) {
   } catch (error) {
     console.error('Proxy error:', error);
     res.status(500).json({ 
-      error: error.message || 'Internal server error',
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      error: error.message || 'Internal server error'
     });
   }
 }
